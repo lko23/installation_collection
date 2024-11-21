@@ -56,13 +56,13 @@ vi /etc/grafana/ldap.toml
 vi /etc/loki/config.yml
 
 #Grafana Overwrite config for routed proxy
-mkdir  /usr/lib/systemd/system/grafana-server.service.d
-vim  /usr/lib/systemd/system/grafana-server.service.d/override.conf
+systemctl edit grafana-server.service
  
 [Service]
 Environment="HTTP_PROXY=http://proxy.domain.tld:8080"
 Environment="HTTPS_PROXY=http://proxy.domain.tld:8080"
 
+#Loki Overwrite config for not logging to syslog
 systemct edit loki.service
 
 [Service]

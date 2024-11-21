@@ -381,6 +381,4 @@ if ($this::exists('icingadb') && IcingadbSupport::useIcingaDbAsBackend()) {
 ...  
  
 # Clean Graphite DB every week Monday 5am for data with no entry within 90 days see scripts collection
-0 5 * * 1 /root/graphite_db_cleanup.sh
-# Clean Graphite Log every week Monday 6am for log older than 90 days see scripts collection
-0 6 * * 1 /root/graphite_log_cleanup.sh
+0 5 * * 1 graphite_cleanup.sh

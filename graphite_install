@@ -1,0 +1,386 @@
+## Graphite Docs https://graphite.readthedocs.io/en/stable/install-pip.html
+ 
+## Install Dependencies
+dnf install python39-devel python39-pip-wheel python39-wheel python39-cffi python3-cairo cairo-devel libffi-devel
+ 
+## Install Python Sources
+PYTHONPATH="/opt/graphite/lib/:/opt/graphite/webapp/"
+## printenv PYTHONPATH Set Proxy in /etc/environment
+pip3.9 install --no-binary=:all: https://github.com/graphite-project/whisper/tarball/master
+pip3.9 install --no-binary=:all: https://github.com/graphite-project/graphite-web/tarball/master
+pip3.9 install --no-binary=:all: https://github.com/graphite-project/carbon/tarball/master
+ 
+## Add User graphite to /etc/passwd
+graphite:x:1001:1001:Graphite Server:/opt/graphite:/sbin/nologin
+ 
+## Set graphite user/group for /opt/graphite
+chown -R graphite:graphite /opt/graphite
+ 
+## Add SQLite DB scheme for graphite
+#PYTHONPATH="/opt/graphite/lib/:/opt/graphite/webapp/"
+/usr/local/bin/django-admin.py migrate --settings=graphite.settings
+ 
+## Configure Graphite WebApp
+cp /opt/graphite/webapp/graphite/local_settings.py.example /opt/graphite/webapp/graphite/local_settings.py
+vi /opt/graphite/webapp/graphite/local_settings.py
+## For testing purpose the default configuration is suitable
+ 
+## Install WebServer Module for Python
+pip3.9 install gunicorn
+ 
+## Add Startup Script
+vi /etc/systemd/system/graphite-web.socket
+    # This is /etc/systemd/system/graphite-web.socket
+    [Unit]
+    Description=graphite-web socket
+    PartOf=graphite-web.service
+ 
+    [Socket]
+    ListenStream=/run/graphite-api.sock
+    ListenStream=127.0.0.1:8080
+ 
+    [Install]
+    WantedBy=sockets.target
+     
+vi /etc/systemd/system/graphite-web.service
+    # This is /etc/systemd/system/graphite-web.service
+    [Unit]
+    Description=graphite-web service
+    Requires=graphite-web.socket
+ 
+    [Service]
+    #Set Environment-Path
+    Environment=PYTHONPATH="/opt/graphite/lib/:/opt/graphite/webapp/"
+    #ExecStart=/usr/bin/gunicorn wsgi --pythonpath=/opt/graphite/webapp/graphite --bind 127.0.0.1:8080
+    ExecStart=/usr/local/bin/gunicorn wsgi --pythonpath=/opt/graphite/webapp/graphite --bind 127.0.0.1:8080
+    Restart=on-failure
+    User=graphite
+    Group=graphite
+    ExecReload=/bin/kill -s HUP $MAINPID
+    ExecStop=/bin/kill -s TERM $MAINPID
+ 
+    [Install]
+    WantedBy=multi-user.target
+ 
+## Acitvate and Open Firewall for http, https, and carbon-listener/aggregator ports
+#systemctl enable firewalld.service
+#systemctl start firewalld.service
+#firewall-cmd --permanent --add-port={80/tcp,443/tcp,2003/tcp,2004/tcp,2023/tcp,2024/tcp}
+#firewall-cmd --reload
+ 
+## Install and Configure WebProxyy/Server
+dnf install nginx
+ 
+## Write dedicated Log
+touch /var/log/nginx/graphite.access.log
+touch /var/log/nginx/graphite.error.log
+chmod 640 /var/log/nginx/graphite.*
+chown nginx:nginx /var/log/nginx/graphite.*
+ 
+## Do not use sites available,
+## rather comment out server block in /etc/nginx/nginx.conf and include /etc/nginx/conf.d/graphite.conf in nginx.conf
+## If IPv6 is not active it is imperative to comment out "listen [::]:80 default_server;"
+ 
+vi /etc/nginx/nginx.conf
+ 
+...
+    # Load modular configuration files from the /etc/nginx/conf.d directory.
+    # See http://nginx.org/en/docs/ngx_core_module.html#include
+    # for more information.
+    include /etc/nginx/conf.d/*.conf;
+ 
+   # server {
+        #listen       80 default_server;
+        #listen       [::]:80 default_server;
+        #server_name  _;
+        #root         /usr/share/nginx/html;
+ 
+        # Load configuration files for the default server block.
+        include /etc/nginx/default.d/*.conf;
+ 
+        #location / {
+        #}
+ 
+        #error_page 404 /404.html;
+        #    location = /40x.html {
+        #}
+ 
+        #error_page 500 502 503 504 /50x.html;
+        #    location = /50x.html {
+        #}
+   # }
+...
+ 
+## Create include
+vi /etc/nginx/conf.d/graphite.conf
+    # This is /etc/nginx/conf.d/graphite.conf
+    upstream graphite {
+    server 127.0.0.1:8080 fail_timeout=0;
+    }
+    server {
+        listen 80 default_server;
+        server_name _;
+        return 301 https://$host$request_uri;
+    }
+ 
+    server {
+        listen 443 ssl;
+        server_name _;
+        ssl_certificate     /etc/ssl/certs/cert.pem;
+        ssl_certificate_key /etc/ssl/certs/key.pem;
+        ssl_protocols       TLSv1.2 TLSv1.3;
+ 
+        root /opt/graphite/webapp;
+        access_log /var/log/nginx/graphite.access.log;
+        error_log  /var/log/nginx/graphite.error.log;
+ 
+        location = /favicon.ico {
+            return 204;
+        }
+ 
+        # serve static content from the "content" directory
+        location /static {
+            alias /opt/graphite/webapp/content;
+            expires max;
+        }
+     
+        location / {
+            try_files $uri @graphite;
+        }
+     
+        location @graphite {
+            proxy_pass_header Server;
+            proxy_set_header Host $http_host;
+            proxy_redirect off;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Scheme $scheme;
+            proxy_connect_timeout 10;
+            proxy_read_timeout 10;
+            proxy_pass http://graphite;
+        }
+    }
+ 
+## entitle nginx user for db access, maybe not needed
+#chown nginx:nginx /opt/graphite/storage/graphite.db
+ 
+## Start Web Proxy and Service
+systemctl enable nginx.service
+systemctl enable graphite-web.socket
+systemctl enable graphite-web.service
+systemctl start  nginx.service
+systemctl start  graphite-web.service
+ 
+## Reboot System to check if config is permanent
+#systemctl reboot
+## Test WebApp in a Browser e.g. http://host.domain.tld
+ 
+## Configure Carbon Listener and whisper storage
+cp /opt/graphite/conf/carbon.conf.example /opt/graphite/conf/carbon.conf
+cp /opt/graphite/conf/storage-schemas.conf.example /opt/graphite/conf/storage-schemas.conf
+cp /opt/graphite/conf/storage-aggregation.conf.example /opt/graphite/conf/storage-aggregation.conf
+ 
+## For testing purpose the default carbon configuration is suitable
+vi /opt/graphite/conf/carbon.conf
+ 
+## for fast data load set and restart carbon-cache
+...
+MAX_CREATES_PER_MINUTE = 500
+...
+ 
+## Set storage schema for testing
+vi /opt/graphite/conf/storage-schemas.conf
+ 
+[carbon]
+pattern = ^carbon\.
+retentions = 1m:90d
+ 
+[icinga2_daily]
+pattern = ^icinga2\..*_daily\.
+retentions = 1d:800d
+ 
+[icinga2_hourly]
+pattern = ^icinga2\..*_hourly\.
+retentions = 1h:90d,1d:800d
+ 
+[icinga2_hostalive]
+pattern = ^icinga2\..*\.host\.hostalive4\.
+retentions = 3m:7d,1h:90d,1d:800d
+ 
+[dummy_host_bp_all]
+pattern = ^icinga2\.dummy-host-bp-all\.
+retentions = 1m:7d,1h:90d,1d:800d
+ 
+[icinga2]
+pattern = ^icinga2\.
+retentions = 5m:7d,1h:90d,1d:800d
+ 
+[default]
+pattern = .*
+retentions = 1m:1d,5m:30d
+ 
+## For testing purpose the default storage aggregation configuration is suitable
+vi /opt/graphite/conf/storage-aggregation.conf
+ 
+## Furhter config is possible if needed, e.g relay-rules.conf, aggregation-rules.conf, rewrite-rules.conf, whitelist and blacklist
+ 
+## Set default buffering for Python V>3.8
+vi /opt/graphite/lib/carbon/log.py
+...
+      #kopplu 03.01.2021 Use default Buffering
+      #self.path, os.O_CREAT | os.O_RDWR, openMode), 'rb+', 1)
+      self.path, os.O_CREAT | os.O_RDWR, openMode), 'rb+')
+...
+ 
+## Start carbon daemon
+#/opt/graphite/bin/carbon-cache.py start
+ 
+## Add Startup Script
+vi /etc/systemd/system/carbon-cache.service
+# This is /etc/systemd/system/carbon-cache.service
+    Description = Carbon Listener
+ 
+    [Service]
+    Type = forking
+    GuessMainPID = false
+    PIDFile = /opt/graphite/storage/carbon-cache-a.pid
+    ExecStart = /opt/graphite/bin/carbon-cache.py start
+    Restart=on-failure
+    User=graphite
+    Group=graphite
+    ExecReload=/bin/kill -s HUP $MAINPID
+    ExecStop=/bin/kill -s TERM $MAINPID
+ 
+    [Install]
+    WantedBy = multi-user.target
+ 
+## Check carbon logs if needed
+/opt/graphite/storage/log/carbon-cache/
+ 
+## Autostart carbon-cache by cronjob after reboot
+#crontab -e
+#   #Start Carbon-Cache ater reboot with 30 seconds delay
+#   @reboot sleep 30 && /opt/graphite/bin/carbon-cache.py start
+ 
+## Reboot System to check if config is permanent
+systemctl reboot   ## Install nc for Testing
+dnf install nc
+ 
+## Send random data to graphite
+ while true; do  echo "local.random.gugus $((1 + $RANDOM % 100)) `date +%s`" | nc host.domain.tld 2003; sleep 60; done
+ 
+## Set locale to en_DK or any other 24h time format (not needed)
+#localectl set-locale LANG=en_DK.UTF-8
+ 
+## Set time zone for Graphite
+vi /opt/graphite/webapp/graphite/local_settings.py
+...
+    #TIME_ZONE = 'America/Los_Angeles'
+    TIME_ZONE = 'Europe/Zurich'
+ 
+    #DATE_FORMAT = '%m/%d'
+    #DATE_FORMAT = '%d/%m/%y %H/%M/%S'
+    DATE_FORMAT = '%d.%m.%y'
+...
+ 
+systemctl restart  graphite-web.service
+ 
+## Set Config and acitvate Icinga feature GaphiteWriter on monitoring01/02
+icinga2 feature enable graphite
+ 
+vi /etc/icinga2/features-enabled/graphite.conf
+    /**
+     * The GraphiteWriter type writes check result metrics and
+     * performance data to a graphite tcp socket.
+     */
+ 
+    object GraphiteWriter "graphite" {
+      host = "10.150.0.150"
+      port = 2003
+      enable_send_thresholds = true
+      enable_send_metadata = true
+      enable_ha = true
+    }
+ 
+ 
+## Activate Icingaweb Module Graphite
+vi /etc/icingaweb2/modules/graphite/config.ini
+[graphite]
+url = "https://graphite.domain.tld/"
+insecure = "0"
+ 
+[ui]
+default_time_range = "2"
+default_time_range_unit = "days"
+disable_no_graphs_found = "1"
+ 
+ 
+## Restart Icinga Service
+systemctl restart icinga2.service
+ 
+## Check database size
+du -sh /opt/graphite/storage/whisper/*
+ 
+## Installation of GraphiteModule for IcingaWeb
+## Download Source https://github.com/Icinga/icingaweb2-module-graphite and extract
+mv ./icingaweb2-module-graphite /usr/share/icingaweb2/modules/graphite
+chown -R root:root /usr/share/icingaweb2/modules/graphite
+chcon -R system_u:object_r:icingaweb2_content_t:s0 /usr/share/icingaweb2/modules/graphite
+ 
+## Activate Module (also possible from WebGUI)
+icingacli module enable graphite
+ 
+## Deactivate default Templates and Configure Custem Templates
+#default
+cd /usr/share/icingaweb2/modules/graphite/templates
+rename "" "." ./*
+ 
+#custom
+/etc/icingaweb2/modules/graphite/templates
+ 
+## Remove Proxy Config
+> /etc/environment
+ 
+## Reset Max Create Rate
+vi /opt/graphite/conf/carbon.conf
+...
+MAX_CREATES_PER_MINUTE = 50
+...
+ 
+## Modifiy php GraphiteModul for v1.2.0
+vi /usr/share/icingaweb2/modules/graphite/library/Graphite/Web/Widget/Graphs.php
+...
+    /**
+     * Graph image width
+     *
+     * @var string
+     * protected $width = '350';
+     */
+    protected $width = '850';
+ 
+    /**
+     * Graph image height
+     *
+     * protected $height = '200';
+     * @var string
+     */
+    protected $height = '250';
+...
+ 
+## Add Services by Host Search
+vi /usr/share/icingaweb2/modules/graphite/configuration.php
+...
+if ($this::exists('icingadb') && IcingadbSupport::useIcingaDbAsBackend()) {
+    $section->add(N_('Hosts'), ['url' => 'graphite/hosts']);
+    $section->add(N_('Services'), ['url' => 'graphite/services']);
+    $section->add(N_('Services by Host'), ['url' => 'graphite/services?modifyFilter=1']);
+} else {
+    $section->add(N_('Hosts'), ['url' => 'graphite/list/hosts']);
+    $section->add(N_('Services'), ['url' => 'graphite/list/services']);
+    $section->add(N_('Services by Host'), ['url' => 'graphite/list/services?modifyFilter=1']);
+}
+...  
+ 
+# Clean Graphite DB every week Monday 5am for data with no entry within 90 days see scripts collection
+0 5 * * 1 /root/graphite_db_cleanup.sh
+# Clean Graphite Log every week Monday 6am for log older than 90 days see scripts collection
+0 6 * * 1 /root/graphite_log_cleanup.sh

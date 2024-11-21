@@ -62,7 +62,13 @@ vim  /usr/lib/systemd/system/grafana-server.service.d/override.conf
 [Service]
 Environment="HTTP_PROXY=http://proxy.domain.tld:8080"
 Environment="HTTPS_PROXY=http://proxy.domain.tld:8080"
- 
+
+systemct edit loki.service
+
+[Service]
+StandardOutput=null
+StandardError=append:/var/log/loki/loki.log
+
 # enable and start services
 systemctl daemon-reload
 systemctl enable loki

@@ -1,0 +1,79 @@
+# if proxy, add to env for installation
+vim /etc/environment
+PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/games:/usr/local/games:/snap/bin"
+http_proxy='http://user:pw@proxy.domain.tld:8080'
+https_proxy='http://user:pw@proxy.domain.tld:8080'
+no_proxy='localhost,127.0.0.1,.domain.tld'
+ 
+#Enable Ubuntu Universe Repo for musl C library
+subscription-manager repos --enable=Ubuntu_22_04_LTS_Ubuntu_22_04_universe
+ 
+#install grafana and loki
+wget --no-check-certificate -q -O - https://apt.grafana.com/gpg.key | gpg --dearmor > /etc/apt/keyrings/grafana.gpg
+echo "deb [signed-by=/etc/apt/keyrings/grafana.gpg] https://apt.grafana.com stable main" | tee /etc/apt/sources.list.d/grafana.list
+echo "Acquire::https::apt.grafana.com::Verify-Peer "false";" | tee /etc/apt/apt.conf.d/grafana.conf
+apt-get update
+apt-get install grafana loki
+ 
+#disable repo if not used
+vim /etc/apt/sources.list.d/grafana.list
+#deb [signed-by=/etc/apt/keyrings/grafana.gpg] https://apt.grafana.com stable main
+ 
+#move key and cert (pem) to /etc/grafana/
+chown root:grafana  /etc/grafana/
+chmod 640 /etc/grafana/*.pem
+ 
+#add loki data disk
+lsblk
+mkfs.ext4 /dev/sdb
+ll /dev/disk/by-uuid/
+vim /etc/fstab # add disk by uid
+mkdir /data/loki
+mount /dev/sdb /data/loki
+df -hT
+ 
+#add large dir feature for data disk (relevant if more than 5 Mio. Chunks)
+tune2fs -O large_dir /dev/sdb
+tune2fs -l /dev/sdb
+ 
+mkdir /data/loki
+chown loki:nogroup /data/loki
+ 
+#Route https request to Port 3000 by iptables
+apt install iptables-persistent
+iptables -t nat -A PREROUTING -p tcp --dport 443 -j REDIRECT --to-port 3000
+iptables -t nat -I OUTPUT -p tcp -d 127.0.0.1 --dport 443 -j REDIRECT --to-ports 3000
+mkdir /etc/iptables
+/sbin/iptables-save > /etc/iptables/rules.v4
+ 
+#set initial grafana config see config_collections
+vi /etc/grafana/grafana.ini
+
+#set ldap config see config_collections
+vi /etc/grafana/ldap.toml
+ 
+# set initial loki config see config_collections
+vi /etc/loki/config.yml
+
+#Grafana Overwrite config for routed proxy
+mkdir  /usr/lib/systemd/system/grafana-server.service.d
+vim  /usr/lib/systemd/system/grafana-server.service.d/override.conf
+ 
+[Service]
+Environment="HTTP_PROXY=http://proxy.domain.tld:8080"
+Environment="HTTPS_PROXY=http://proxy.domain.tld:8080"
+ 
+# enable and start services
+systemctl daemon-reload
+systemctl enable loki
+systemctl enable grafana
+systemctl start loki
+systemctl start grafana
+ 
+# Loki Troubleshooting
+ sudo -u loki /usr/bin/loki -config.file /etc/loki/config.yml -log.level=debug
+ sudo -u loki /usr/bin/loki -config.file /etc/loki/config_secure.yml -log.level=debug
+
+# generate SID User lookup file for grafana queries by seperate skript see skript_collection
+crontab -e
+15 4 * * * /root/lookup_sid.sh

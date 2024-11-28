@@ -1,0 +1,389 @@
+vi /etc/netplan/50-cloud-init.yaml
+
+# This file is generated from information provided by the datasource.  Changes
+# to it will not persist across an instance reboot.  To disable cloud-init's
+# network configuration capabilities, write a file
+# /etc/cloud/cloud.cfg.d/99-disable-network-config.cfg with the following:
+# network: {config: disabled}
+network:
+    bonds:
+        bond0:
+            interfaces:
+            - ens2f0np0
+            - ens2f1np1
+            parameters:
+                lacp-rate: fast
+                mode: 802.3ad
+                transmit-hash-policy: layer2
+    ethernets:
+        ens2f0np0: {}
+        ens2f1np1: {}
+    version: 2
+    vlans:
+        bond0.685:
+            addresses:
+            - aaa.bbb.ccc.ddd/24
+            id: 685
+            link: bond0
+            nameservers:
+                addresses:
+                - aaa.bbb.ccc.ddd
+                - aaa.bbb.ccc.ddd
+                - aaa.bbb.ccc.ddd
+                search:
+                - domain.tld
+            routes:
+            -   to: default
+                via: aaa.bbb.ccc.ddd
+
+#add keys
+vi /root/.ssh/authorized_keys
+
+#add lnx.proxy.ksl to /etc/environment temporarily
+http_proxy='http://usr:xxxx@proxy.domain.tld:8080'
+https_proxy='http://usr:xxxx@proxy.domain.tld:8080'
+no_proxy='localhost,127.0.0.1,.domain.tld
+
+passwd root
+
+wget -qO - http://oss.atix.de/atix_gpg.pub | apt-key add -
+
+vi /etc/apt/source.list
+deb http://archive.ubuntu.com/ubuntu noble main restricted
+deb http://archive.ubuntu.com/ubuntu noble-updates main restricted
+deb http://archive.ubuntu.com/ubuntu noble universe
+deb http://archive.ubuntu.com/ubuntu noble-updates universe
+deb http://archive.ubuntu.com/ubuntu noble multiverse
+deb http://archive.ubuntu.com/ubuntu noble-updates multiverse
+deb http://archive.ubuntu.com/ubuntu noble-backports main restricted universe multiverse
+deb http://archive.ubuntu.com/ubuntu noble-security main restricted
+deb http://archive.ubuntu.com/ubuntu noble-security universe
+deb http://archive.ubuntu.com/ubuntu noble-security multiverse
+deb http://oss.atix.de/Ubuntu24LTS/ stable main
+
+apt update
+apt install python3-subscription-manager
+
+apt-key list
+apt-key del "KEY-ID"
+
+#run ansible from ansilbe-tower until failed
+apt-get dist-upgrade
+reboot
+#run ansible from ansilbe-tower
+
+timedatectl set-timezone xxx
+
+# Repo Ubuntu noble universe and noble-update universe have to be active
+
+apt install apache2 mariadb-server  -y
+apt install php8.3 libapache2-mod-php8.3 php8.3-curl php8.3-gd php8.3-mbstring php8.3-xml php8.3-xmlrpc php8.3-soap php8.3-intl php8.3-zip php8.3-cli php8.3-mysql php8.3-common php8.3-opcache php8.3-pgsql php8.3-gmp php8.3-imagick -y
+apt install php-odbc php-sybase tdsodbc -y
+
+# copy existing tls certificates from old host to new
+scp root@host:/etc/pki/tls/certs/cert* /etc/ssl/certs/
+scp root@host:/etc/pki/tls/private/cert* /etc/ssl/private/
+
+# ssl config for apache server
+vi /etc/apache2/conf-available/ssl.conf
+
+# Listen directive can be found in
+# /etc/httpd/conf.d/ports.conf
+#
+##
+## SSL Global Context
+##
+
+#SSLPassPhraseDialog exec:/usr/libexec/httpd-ssl-pass-dialog
+
+#SSLSessionCache         shmcb:/run/httpd/sslcache(512000)
+#SSLSessionCacheTimeout  300
+
+#SSLRandomSeed startup file:/dev/urandom  256
+#SSLRandomSeed connect builtin
+
+#SSLCryptoDevice builtin
+
+##
+## SSL Virtual Host Context
+##
+
+<VirtualHost _default_:443>
+
+        ServerName name.domain.tld:443
+        ServerAdmin mail@domain.tld
+        DocumentRoot /var/www/html
+
+        # redirect server-root to icinagweb2
+        RedirectMatch ^/$ /icingaweb2/
+
+        ErrorLog ${APACHE_LOG_DIR}/ssl_error.log
+        #TransferLog logs/ssl_access_log
+        LogLevel warn
+
+        SSLEngine on
+
+        # no SSLv2(broken), no SSLv3(weak)
+        SSLProtocol All -SSLv2 -SSLv3
+
+        # supported Ciphers
+        # disable: null, sslv2, rc4, md5, des, 3des
+        #SSLCipherSuite HIGH:3DES:!aNULL:!MD5:!SEED:!IDEA
+        SSLCipherSuite kEECDH:+kEECDH+SHA:kEDH:+kEDH+SHA:+kEDH+CAMELLIA:kECDH:+kECDH+SHA:kRSA:+kRSA+SHA:+kRSA+CAMELLIA:!aNULL:!eNULL:!SSLv2:!RC4:!MD5:!DES:!EXP:!SEED:!IDEA:!3DES
+
+        # SSL certificates & key
+        SSLCertificateFile /etc/ssl/certs/cert.crt.pem
+        SSLCertificateKeyFile /etc/ssl/private/cert.key.pem
+        SSLCertificateChainFile /etc/ssl/certs/cert.chain.pem
+
+        <Files ~ "\.(cgi|shtml|phtml|php3?)$">
+                SSLOptions +StdEnvVars
+        </Files>
+        <Directory "/var/www/cgi-bin">
+                SSLOptions +StdEnvVars
+        </Directory>
+
+        BrowserMatch "MSIE [2-6]" \
+                nokeepalive ssl-unclean-shutdown \
+                downgrade-1.0 force-response-1.0
+
+        BrowserMatch "MSIE [17-9]" ssl-unclean-shutdown
+
+        #CustomLog logs/ssl_request_log \
+        #  "%t %h %{SSL_PROTOCOL}x %{SSL_CIPHER}x \"%r\" %b"
+
+</VirtualHost>
+
+
+#enable ssl mod and conf
+cd /etc/apache2/mod-enabled
+ln -s ../mods-available/ssl.load ssl.load
+cd /etc/apache2/conf-enabled
+ln -s ../conf-available/ssl.conf ssl.conf
+
+
+#set php config
+vi /etc/php/8.3/apache2/php.ini
+memory_limit = 256M 
+post_max_size = 64M
+upload_max_filesize = 100M	
+max_execution_time = 300
+default_charset = "UTF-8"
+date.timezone = xxx
+
+# add local alias for galera wsrep nodes
+vi /etc/hosts
+aaa.bbb.ccc.ddd host01.domain.tld host01 icinga2db01.domain.tld   icinga2db01  # node 1
+aaa.bbb.ccc.ddd host02.domain.tld host02 icinga2db02.domain.tld   icinga2db02  # node 2
+aaa.bbb.ccc.ddd host03.domain.tld host03 icinga2db03.domain.tld   icinga2db03  # galera arbitrator
+
+#galera config
+vi /etc/mysql/mariadb.conf.d/60-galera.cnf
+#
+# * Galera-related settings
+#
+# See the examples of server wsrep.cnf files in /usr/share/mysql
+# and read more at https://mariadb.com/kb/en/galera-cluster/
+
+[galera]
+# Mandatory settings
+wsrep_on                 = ON
+wsrep_cluster_name       = "icinga2-cluster"
+#alias icinga2db is defined local in /etc/hosts
+wsrep_cluster_address    = gcomm://icinga2db01,icinga2db02,icinga2db03
+wsrep_node_name          = "icinga2db0x"
+wsrep_node_address       = aaa.bbb.ccc.ddd
+binlog_format            = row
+default_storage_engine   = InnoDB
+innodb_autoinc_lock_mode = 2
+wsrep_provider           = /usr/lib/libgalera_smm.so
+
+# Allow server to accept connections on all interfaces.
+bind-address = 0.0.0.0
+
+# Optional settings
+wsrep_slave_threads = 1
+#innodb_flush_log_at_trx_commit = 0
+
+# icinga vsphereDB module needs 2GB
+wsrep_max_ws_size=2147483647
+
+#initial start of galera cluster
+mysql_secure_installation #yes to all
+systemctl enable mariadb.service
+galera_new_cluster #node1
+systemctl start mariadb.service #node2
+
+wget -qO - https://packages.icinga.com/icinga.key | apt-key add -
+mv /etc/apt/trusted.gpg /etc/apt/trusted.gpg.d/
+
+apt install icinga2 monitoring-plugins nagios-nrpe-plugin icinga2-ido-mysql icingaweb2 icinga-director icingacli libapache2-mod-php -y
+
+#add custom plugins
+ scp -r /usr/lib/icinga2/custom_plugins/ root@host:/usr/lib/icinga2/custom_plugins
+
+# install custom plugin dependencies
+apt install python3-pymssql python3-dnspython php-snmp net-tools nmap -y
+
+#link python
+ln -s /usr/bin/python3 /usr/bin/python
+
+# remove snmp conf (or comment mibs)
+rm /etc/snmp/snmp.conf
+
+# activate php modules 
+vi /etc/php/8.3/apache2/php.ini
+systemctl restart apache2
+
+#check dns serials
+scp  /usr/lib64/nagios/plugins/check_dnsserials root@host:/usr/lib/icinga2/custom_plugins/check_dnsserials
+ln -s /usr/lib/nagios/ /usr/lib64/nagios
+ln -s /usr/lib/icinga2/custom_plugins/check_dnsserials /usr/lib/nagios/plugins/
+
+#add sudoers nmap for udp portscan
+vi /etc/sudoers
+nagios  ALL= NOPASSWD:/usr/bin/nmap
+
+apt install keepalived
+
+# add keepalived conf
+vi /etc/keepalive/keepalive.conf
+global_defs {
+   notification_email {
+        mail@domain.tld
+   }
+   notification_email_from keepalived@host.domain.tld
+   smtp_server smtp.domain.tld
+   smtp_connect_timeout 30
+!   router_id LVS_DEVEL
+!   vrrp_skip_check_adv_addr
+!   vrrp_strict
+!   vrrp_garp_interval 0
+!   vrrp_gna_interval 0
+   script_user root root
+}
+
+vrrp_script check_icinga {
+   script "/usr/libexec/keepalived/check_icinga.sh"
+   interval 3                           # check every 3s
+   fall 2                               # must fail 2 times for not OK
+   rise 2                               # must be ok 2 times for OK
+   timeout 2                            # wait up to 2s before not OK
+}
+
+vrrp_instance icinga2 {
+   state MASTER                         # default role
+   interface bond0                      # interface to use
+   virtual_router_id 99                 # virtual router ID
+   priority 250                         # priority of this keepalive instance
+   advert_int 1                         # send VRRP adverts to partner (must)
+   !smtp_alert                          # send mail in case of alert (e.g. role state changes)
+
+   unicast_src_ip aaa.bbb.ccc.ddd       # own IP
+   unicast_peer {
+      aaa.bbb.ccc.ddd                   # partner IP
+   }
+
+   virtual_ipaddress {
+      aaa.bbb.ccc.ddd                   # vIP
+   }
+   authentication {
+      auth_type PASS                    # all vIP-members must..
+      auth_pass VRRP4domain             # ..share these settings
+   }
+
+   track_script {                       # if this fails vIP will be removed
+      check_icinga
+   }
+}
+
+
+#copy icinga config and activate icinga modules
+scp -r root@host:/etc/icinga2/ /etc/icinga2
+chown -R nagios:nagios /etc/icinga2
+ln -s ../features-available/api.conf api.conf
+ln -s ../features-available/checker.conf checker.confg
+ln -s ../features-available/checker.conf checker.conf
+ln -s ../features-available/command.conf command.conf
+ln -s ../features-available/graphite.conf graphite.conf
+ln -s ../features-available/ido-mysql.conf ido-mysql.conf
+ln -s  ../features-available/mainlog.conf mainlog.conf
+ln -s  ../features-available/notification.conf notification.conf
+
+#change node names in constants.conf and zones.conf
+vi /etc/icinga2/constants.conf
+vi /etc/icinga2/zones.conf
+
+copy icingaweb conf
+scp -r root@host:/etc/icingaweb2/modules/ /etc/icingaweb2/
+
+# change primary node name for director kickstarter
+vi /etc/icingaweb2/modules/director/kickstart.ini
+
+# icinga internal pki
+icinga2 pki new-ca
+ls -l /var/lib/icinga2/ca/ca.crt /var/lib/icinga2/ca/ca.key
+ 
+# generate new certs if needed on node1
+export ICINGA2_CN=`hostname -f`
+icinga2 pki new-cert --cn ${ICINGA2_CN} --key /var/lib/icinga2/certs/${ICINGA2_CN}.key --csr /var/lib/icinga2/certificate-requests/${ICINGA2_CN}.csr
+scp root@host-node2:/var/lib/icinga2/certificate-requests/${ICINGA2_CN}.csr /tmp/
+icinga2 pki sign-csr --csr /var/lib/icinga2/certificate-requests/${ICINGA2_CN}.csr --cert /var/lib/icinga2/certs/${ICINGA2_CN}.crt
+cp /var/lib/icinga2/ca/ca.crt /var/lib/icinga2/certs/
+icinga2 pki sign-csr --csr /tmp/${ICINGA2_CN}.csr --cert /tmp/${ICINGA2_CN}.crt
+scp /tmp/${ICINGA2_CN}.crt root@host-node2:/var/lib/icinga2/certificate-requests/
+
+# dump db and users and reload on new host
+mariadb-dump --all-databases --lock-tables=false -ubackup -pxxx > /tmp/full_dump.sql
+mariadb-dump --system=users >/tmp/users.sql
+scp -r root@host:/tmp/*.sql /tmp/
+mariadb < /tmp/full_dump.sql
+mariadb < /tmp/users.sql
+
+icingacli director kickstart run
+
+#remove user with null value username from db
+mysql
+	use director;
+	select * from icinga_user where object_name is null;
+	delete * from icinga_user where object_name is null;
+	commit;
+
+#fix mysql error
+mysql
+	ALTER TABLE mysql.column_stats MODIFY histogram longblob;
+	ALTER TABLE mysql.column_stats MODIFY hist_type enum('SINGLE_PREC_HB','DOUBLE_PREC_HB','JSON_HB');
+
+#apply schema migration for newer icinga, icingadirector and icingaweb versions from gui
+
+#logrotate
+vi /etc/logrotate.d/mariadb
+# add logpath /var/log/mariadb/*.log
+
+chown nagios:nagios -R /etc/log/icinga2
+vi /etc/logrotate.d/icinga2
+#change to
+        #create 644 nagios nagios
+        su nagios nagios 
+        postrotate
+                #/bin/kill -USR1 $(cat /run/icinga2/icinga2.pid 2> /dev/null) 2> /dev/null || true
+                /bin/systemctl reload icinga2.service > /dev/null 2>/dev/null || true
+        endscript
+
+
+vi /etc/logrotate.d/icingaweb2
+/var/log/icingaweb2/icingaweb2.log {
+    monthly
+    rotate 7
+    su www-data icingaweb2
+    compress
+    missingok
+    notifempty
+    sharedscripts
+    delaycompress
+    postrotate
+        /bin/systemctl reload httpd.service > /dev/null 2>/dev/null || true
+    endscript
+}
+ 
+ 

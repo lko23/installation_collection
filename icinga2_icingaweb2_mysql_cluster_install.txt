@@ -39,7 +39,7 @@ network:
 #add keys
 vi /root/.ssh/authorized_keys
 
-#add lnx.proxy.ksl to /etc/environment temporarily
+#add proxy user to /etc/environment temporarily
 http_proxy='http://usr:xxxx@proxy.domain.tld:8080'
 https_proxy='http://usr:xxxx@proxy.domain.tld:8080'
 no_proxy='localhost,127.0.0.1,.domain.tld

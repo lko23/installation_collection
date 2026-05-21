@@ -6,9 +6,9 @@ dnf install python39-devel python39-pip-wheel python39-wheel python39-cffi pytho
 ## Install Python Sources
 PYTHONPATH="/opt/graphite/lib/:/opt/graphite/webapp/"
 ## printenv PYTHONPATH Set Proxy in /etc/environment
-pip3.9 install --no-binary=:all: https://github.com/graphite-project/whisper/tarball/master
-pip3.9 install --no-binary=:all: https://github.com/graphite-project/graphite-web/tarball/master
-pip3.9 install --no-binary=:all: https://github.com/graphite-project/carbon/tarball/master
+pip3.9 install --no-binary=:all: https://github.com/graphite-project/whisper/tarball/master # use latest stable version for production instead of master
+pip3.9 install --no-binary=:all: https://github.com/graphite-project/graphite-web/tarball/master # use latest stable version for production instead of master
+pip3.9 install --no-binary=:all: https://github.com/graphite-project/carbon/tarball/master # use latest stable version for production instead of master
  
 ## Add User graphite to /etc/passwd
 graphite:x:1001:1001:Graphite Server:/opt/graphite:/sbin/nologin

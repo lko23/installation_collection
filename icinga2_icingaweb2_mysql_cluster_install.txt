@@ -261,23 +261,35 @@ global_defs {
 !   vrrp_garp_interval 0
 !   vrrp_gna_interval 0
    script_user root root
+   enable_snmp_checker
+!   enable_snmp_rfcv3
+!   enable_snmp_rfcv2
+   enable_snmp_vrrp
+!   enable_snmp_rfc
+   enable_script_security
 }
 
-vrrp_script check_icinga {
-   script "/usr/libexec/keepalived/check_icinga.sh"
-   interval 3                           # check every 3s
-   fall 2                               # must fail 2 times for not OK
-   rise 2                               # must be ok 2 times for OK
-   timeout 2                            # wait up to 2s before not OK
+!vrrp_script check_icinga {
+!   script "/usr/libexec/keepalived/check_icinga.sh"
+!   interval 3                           # check every 3s
+!   fall 2                               # must fail 2 times for not OK
+!   rise 2                               # must be ok 2 times for OK
+!   timeout 2                            # wait up to 2s before not OK
+!}
+
+vrrp_track_process track_apache {
+    process apache2
+    weight 10
 }
 
 vrrp_instance icinga2 {
-   state MASTER                         # default role
+   state MASTER                         # default role MASTER or BACKUP
    interface bond0                      # interface to use
-   virtual_router_id 99                 # virtual router ID
-   priority 250                         # priority of this keepalive instance
+   virtual_router_id 99                 # virtual router ID must be unique in subnet
+   priority 250                         # priority of this keepalive instance MASTER must be higher than BACKUP
    advert_int 1                         # send VRRP adverts to partner (must)
    !smtp_alert                          # send mail in case of alert (e.g. role state changes)
+   notify /usr/libexec/keepalived/start_icinga_modules.sh # start or stop icinga-modules according to status
 
    unicast_src_ip aaa.bbb.ccc.ddd       # own IP
    unicast_peer {
@@ -385,5 +397,151 @@ vi /etc/logrotate.d/icingaweb2
         /bin/systemctl reload httpd.service > /dev/null 2>/dev/null || true
     endscript
 }
+
+
+## icinga-kubernetes modul
+apt install icinga-kubernetes icinga-kubernetes-web
  
+# create db user using mysql with root
+CREATE DATABASE kubernetes;
+CREATE USER 'kubernetes'@'localhost' IDENTIFIED BY 'xxx';
+GRANT ALL ON kubernetes.* TO 'kubernetes'@'localhost';
  
+# Icinga Web UI Enable Kubernetes Configuration / Modules
+# Icinga Web UI Configure new DB Ressource Configuration / Application / Ressources
+ 
+# alter max value annotation,length,selector
+ALTER TABLE *tablename* MODIFY name VARCHAR(1024);
+ALTER TABLE *tablename* MODIFY value TEXT;
+ 
+# load db schema
+ mysql -u root -pxxx kubernetes < /usr/share/icinga-kubernetes/schema/mysql/schema.sql
+ 
+# RHOS Admin Console Create Project icinga-monitoring / Icinga Monitoring
+# RHOS Admin Console Create Service Account icinga-kubernetes in Project icinga-monitoring
+# RHOS Admin Console Create Cluster-wide Binding for Role cluster-reader for user icinga-kubernetes in Namespace icinga-monitoring
+# RHOS Admin Console Create Workload Secret from YAML
+apiVersion: v1
+kind: Secret
+metadata:
+  name: icinga-kubernetes-token
+  namespace: icinga-monitoring
+  annotations:
+    kubernetes.io/service-account.name: icinga-kubernetes
+type: kubernetes.io/service-account-token
+ 
+# copy service-ca.crt an store on icinga server as specific environment crt
+vi /etc/icinga-kubernetes/env-ca.crt
+ 
+# create env specific kubeconfig and add token from RHOS Admin Console
+vi /etc/icinga-kubernetes/openshift-kubeconfig-env
+apiVersion: v1
+kind: Config
+ 
+clusters:
+- cluster:
+    server: https://api.cluster.domain.tld:6443
+    certificate-authority: /etc/icinga-kubernetes/env-ca.crt
+  name: openshift
+ 
+contexts:
+- context:
+    cluster: openshift
+    user: icinga
+  name: icinga
+ 
+current-context: icinga
+ 
+users:
+- name: icinga
+  user:
+    token: xxx
+ 
+# set values in config.yml
+vi  /etc/icinga-kubernetes/config.yml
+ 
+chown icinga-kubernetes:icinga-kubernetes  /etc/icinga-kubernetes/*
+chmod 600 /etc/icinga-kubernetes/*
+ 
+# create service for ENV
+vi /usr/lib/systemd/system/icinga-kubernetes-env.service
+[Unit]
+Description=Icinga for Kubernetes ENV
+After=syslog.target network-online.target mariadb.service postgresql.service
+ 
+[Service]
+Type=simple
+#ExecStart=/usr/sbin/icinga-kubernetes --config /etc/icinga-kubernetes/config.yml
+ExecStart=/usr/sbin/icinga-kubernetes daemon --kubeconfig /etc/icinga-kubernetes/openshift-kubeconfig-env --config /etc/icinga-kubernetes/config.yml
+User=icinga-kubernetes
+ 
+[Install]
+WantedBy=multi-user.target
+ 
+##icinga-vspheredb modul
+# php Memory Limit vspheredb v1.2.1 512 MB (Version 1.0.1 265 MB)
+vim /etc/opt/rh/rh-php71/php.ini
+vim /etc/opt/rh/rh-php73/php.ini
+...
+memory_limit = 512M
+...
+ 
+# vspere Indexes
+ALTER TABLE vm_event_history ADD KEY bugfix_search_vc_idx (vcenter_uuid, ts_event_ms);
+ALTER TABLE vm_event_history ADD KEY bugfix2_search_vc_idx (vcenter_uuid, event_key);
+ALTER TABLE alarm_history ADD KEY bugfix_search_vc_idx (vcenter_uuid, ts_event_ms);
+ALTER TABLE alarm_history ADD KEY bugfix2_search_vc_idx (vcenter_uuid, event_key);
+ 
+# Change Watchdog Intervall for slow DBCleanup
+ vi /etc/systemd/system/icinga-vspheredb.service
+ 
+[Unit]
+Description=Icinga vSphereDB Daemon
+Documentation=https://icinga.com/docs/icinga-module-for-vsphere/latest/
+Wants=network.target
+ 
+[Service]
+Type=notify
+EnvironmentFile=-/etc/default/icinga-vspheredb
+EnvironmentFile=-/etc/sysconfig/icinga-vspheredb
+;ExecStartPre=-/usr/bin/rm -rf /tmp/iwebVsphere*
+ExecStart=/usr/bin/icingacli vspheredb daemon run
+; For debugging purposes:
+;ExecStart=/usr/bin/icingacli vspheredb daemon run --trace --debug
+User=icingavspheredb
+ 
+NotifyAccess=main
+;WatchdogSec=10
+WatchdogSec=60
+ 
+Restart=on-failure
+RestartSec=30
+ 
+[Install]
+WantedBy=multi-user.target
+
+
+## service failover only acitve on primary
+# disable autostart on both nodes
+systemctl disable icinga-director.service icinga-vspheredb.service icinga-kubernetes-dev.service icinga-kubernetes-tst.service icinga-kubernetes-prd.service
+
+vi /usr/libexec/keepalived/start_icinga_modules.sh"
+#!/bin/bash
+TYPE=$1
+NAME=$2
+STATE=$3
+case $STATE in
+        "MASTER") /usr/bin/systemctl start icinga-director.service icinga-vspheredb.service icinga-kubernetes-dev.service icinga-kubernetes-tst.service icinga-kubernetes-prd.service
+                  echo "`date +"%F %T"` instance status is MASTER: icinga-modules started" >> /var/log/keepalived-icinga.log
+                  ;;
+        "BACKUP") /usr/bin/systemctl stop icinga-director.service icinga-vspheredb.service icinga-kubernetes-dev.service icinga-kubernetes-tst.service icinga-kubernetes-prd.service
+                  echo "`date +"%F %T"` instance status is BACKUP: icinga-modules stopped" >> /var/log/keepalived-icinga.log
+                  ;;
+        "FAULT")  /usr/bin/systemctl stop icinga-director.service icinga-vspheredb.service icinga-kubernetes-dev.service icinga-kubernetes-tst.service icinga-kubernetes-prd.service
+                  echo "`date +"%F %T"` instance status is FAULT: icinga-modules stopped" >> /var/log/keepalived-icinga.log
+                  exit 0
+                  ;;
+        *)        echo "`date +"%F %T"` instance status is UNKNOWN: don't do any thing" >> /var/log/keepalived-icinga.log
+                  exit 1
+                  ;;
+esac

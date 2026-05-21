@@ -545,3 +545,90 @@ case $STATE in
                   exit 1
                   ;;
 esac
+
+
+## crontab
+# Backup icinga db daily
+59 18 * * * find /var/backups -mtime +3 -type f -delete && mariadb-dump --all-databases --lock-tables=false -ubackup -pXXX | gzip > /var/backups/`hostname`-`date +%Y-%m-%d`.sql.gz
+
+# restart icinga vsphere db if active
+05 19 * * *  if /bin/systemctl --quiet is-active icinga-vspheredb.service; then /bin/systemctl restart icinga-vspheredb.service; fi
+
+# Cleanup icinga-db and vshperedb every week Monday 5am (only active on primary master)
+0 5 * * 1 /root/icinga_db_cleanup_debug.sh > /tmp/icinga_db_cleanup_debug.log
+
+# Sync BP every 10 minutes
+#0,10,20,30,40,50 * * * * rsync -O -e 'ssh -i /var/lib/nagios/.ssh/id_rsa -o loglevel=ERROR' -qaHu --no-links nagios@host01:/etc/icingaweb2/modules/businessprocess/processes/ /etc/icingaweb2/modules/businessprocess/processes/
+5,15,25,35,45,55 * * * * rsync -O -e 'ssh -i /var/lib/nagios/.ssh/id_rsa -o loglevel=ERROR' -qaHu --no-links nagios@host02:/etc/icingaweb2/modules/businessprocess/processes/ /etc/icingaweb2/modules/businessprocess/processes/
+
+# Make BP Backup (only active on primary Master - delete active on both)
+40 18 * * * cp /etc/icingaweb2/modules/businessprocess/processes/BP-All.conf /etc/icingaweb2/modules/businessprocess/processes/BP-All.conf_$(date +'\%Y-\%m-\%d') && find /etc/icingaweb2/modules/businessprocess/processes/ -maxdepth 1 -name "BP-All.conf_*" -mtime +30 -delete
+
+# Sync Config daily
+#50 18 * * * rsync -O -e 'ssh -i /var/lib/nagios/.ssh/id_rsa -o loglevel=ERROR' -qaHu --no-links nagios@host01:/etc/icingaweb2/ /etc/icingaweb2/
+55 18 * * * rsync -O -e 'ssh -i /var/lib/nagios/.ssh/id_rsa -o loglevel=ERROR' -qaHu --no-links nagios@host02:/etc/icingaweb2/ /etc/icingaweb2/
+
+# db cleanup script
+vi /root/icinga_db_cleanup_debug.sh
+#!/bin/bash
+
+# delete inactive objects
+
+echo "`date +%Y%m%d%H%M%S%6N` delete inactive objects"
+mariadb -uicinga -pXXX -v -v -v -e "delete low_priority from icinga.icinga_objects where is_active=0"
+echo "`date +%Y%m%d%H%M%S%6N` delete inactive objects done"
+
+# delete entries where objects do not exist
+
+echo "`date +%Y%m%d%H%M%S%6N` delete objects that do not exist"
+mariadb -uicinga -pXXX -v -v -v -e "delete low_priority from icinga.icinga_acknowledgements where object_id not in (select object_id from icinga.icinga_objects)"
+mariadb -uicinga -pXXX -v -v -v -e "delete low_priority from icinga.icinga_commands where object_id not in (select object_id from icinga.icinga_objects)"
+mariadb -uicinga -pXXX -v -v -v -e "delete low_priority from icinga.icinga_commenthistory where object_id not in (select object_id from icinga.icinga_objects)"
+mariadb -uicinga -pXXX -v -v -v -e "delete low_priority from icinga.icinga_comments where object_id not in (select object_id from icinga.icinga_objects)"
+mariadb -uicinga -pXXX -v -v -v -e "delete low_priority from icinga.icinga_contactgroups where contactgroup_object_id not in (select object_id from icinga.icinga_objects)"
+mariadb -uicinga -pXXX -v -v -v -e "delete low_priority from icinga.icinga_contactgroup_members where contact_object_id not in (select object_id from icinga.icinga_objects)"
+mariadb -uicinga -pXXX -v -v -v -e "delete low_priority from icinga.icinga_contactnotifications where contact_object_id not in (select object_id from icinga.icinga_objects)"
+mariadb -uicinga -pXXX -v -v -v -e "delete low_priority from icinga.icinga_contacts where contact_object_id not in (select object_id from icinga.icinga_objects)"
+mariadb -uicinga -pXXX -v -v -v -e "delete low_priority from icinga.icinga_contactstatus where contact_object_id not in (select object_id from icinga.icinga_objects)"
+mariadb -uicinga -pXXX -v -v -v -e "delete low_priority from icinga.icinga_customvariables where object_id not in (select object_id from icinga.icinga_objects)"
+mariadb -uicinga -pXXX -v -v -v -e "delete low_priority from icinga.icinga_customvariablestatus where object_id not in (select object_id from icinga.icinga_objects)"
+mariadb -uicinga -pXXX -v -v -v -e "delete low_priority from icinga.icinga_downtimehistory where object_id not in (select object_id from icinga.icinga_objects)"
+mariadb -uicinga -pXXX -v -v -v -e "delete low_priority from icinga.icinga_hostgroups where hostgroup_object_id not in (select object_id from icinga.icinga_objects)"
+mariadb -uicinga -pXXX -v -v -v -e "delete low_priority from icinga.icinga_hostgroup_members where host_object_id not in (select object_id from icinga.icinga_objects)"
+mariadb -uicinga -pXXX -v -v -v -e "delete low_priority from icinga.icinga_hosts where host_object_id not in (select object_id from icinga.icinga_objects)"
+mariadb -uicinga -pXXX -v -v -v -e "delete low_priority from icinga.icinga_hoststatus where host_object_id not in (select object_id from icinga.icinga_objects)"
+mariadb -uicinga -pXXX -v -v -v -e "delete low_priority from icinga.icinga_host_contactgroups where contactgroup_object_id not in (select object_id from icinga.icinga_objects)"
+mariadb -uicinga -pXXX -v -v -v -e "delete low_priority from icinga.icinga_host_contacts where contact_object_id not in (select object_id from icinga.icinga_objects)"
+mariadb -uicinga -pXXX -v -v -v -e "delete low_priority from icinga.icinga_notifications where object_id not in (select object_id from icinga.icinga_objects)"
+mariadb -uicinga -pXXX -v -v -v -e "delete low_priority from icinga.icinga_scheduleddowntime where object_id not in (select object_id from icinga.icinga_objects)"
+mariadb -uicinga -pXXX -v -v -v -e "delete low_priority from icinga.icinga_servicedependencies where service_object_id not in (select object_id from icinga.icinga_objects)"
+mariadb -uicinga -pXXX -v -v -v -e "delete low_priority from icinga.icinga_servicegroups where servicegroup_object_id not in (select object_id from icinga.icinga_objects)"
+mariadb -uicinga -pXXX -v -v -v -e "delete low_priority from icinga.icinga_servicegroup_members where service_object_id not in (select object_id from icinga.icinga_objects)"
+mariadb -uicinga -pXXX -v -v -v -e "delete low_priority from icinga.icinga_services where service_object_id not in (select object_id from icinga.icinga_objects)"
+mariadb -uicinga -pXXX -v -v -v -e "delete low_priority from icinga.icinga_servicestatus where service_object_id not in (select object_id from icinga.icinga_objects)"
+mariadb -uicinga -pXXX -v -v -v -e "delete low_priority from icinga.icinga_service_contactgroups where contactgroup_object_id not in (select object_id from icinga.icinga_objects)"
+mariadb -uicinga -pXXX -v -v -v -e "delete low_priority from icinga.icinga_service_contacts where contact_object_id not in (select object_id from icinga.icinga_objects)"
+mariadb -uicinga -pXXX -v -v -v -e "delete low_priority from icinga.icinga_statehistory where object_id not in (select object_id from icinga.icinga_objects)"
+mariadb -uicinga -pXXX -v -v -v -e "delete low_priority from icinga.icinga_timeperiods where timeperiod_object_id not in (select object_id from icinga.icinga_objects)"
+mariadb -uicinga -pXXX -v -v -v -e "delete low_priority from icinga.icinga_timeperiod_timeranges where timeperiod_id not in (select timeperiod_id from icinga.icinga_timeperiods)"
+echo "`date +%Y%m%d%H%M%S%6N` delete objects that do not exist done"
+
+# delete historic entries older than 366 days
+echo "`date +%Y%m%d%H%M%S%6N` delete objects older than 365d"
+mariadb -uicinga -pXXX -v -v -v -e "delete low_priority from icinga.icinga_acknowledgements where entry_time < (now() - interval 366 DAY)"
+mariadb -uicinga -pXXX -v -v -v -e "delete low_priority from icinga.icinga_comments where entry_time < (now() - interval 366 DAY)"
+mariadb -uicinga -pXXX -v -v -v -e "delete low_priority from icinga.icinga_commenthistory where comment_time < (now() - interval 366 DAY)"
+mariadb -uicinga -pXXX -v -v -v -e "delete low_priority from icinga.icinga_notifications where end_time < (now() - interval 366 DAY)"
+mariadb -uicinga -pXXX -v -v -v -e "delete low_priority from icinga.icinga_contactnotifications where end_time < (now() - interval 366 DAY)"
+mariadb -uicinga -pXXX -v -v -v -e "delete low_priority from icinga.icinga_downtimehistory where entry_time < (now() - interval 366 DAY)"
+mariadb -uicinga -pXXX -v -v -v -e "delete low_priority from icinga.icinga_statehistory where state_time < (now() - interval 366 DAY)"
+echo "`date +%Y%m%d%H%M%S%6N` delete objects older than 365d done"
+
+# delete vspheredb history
+echo "`date +%Y%m%d%H%M%S%6N` delete vsphere history"
+mariadb -uvspheredb -pXXX -v -v -v -e "delete low_priority from vspheredb.vm_event_history where ts_event_ms < (UNIX_TIMESTAMP(NOW() - INTERVAL 366 DAY) * 1000)"
+mariadb -uvspheredb -pXXX -v -v -v -e "delete low_priority from vspheredb.alarm_history where ts_event_ms < (UNIX_TIMESTAMP(NOW() - INTERVAL 366 DAY) * 1000)"
+echo "`date +%Y%m%d%H%M%S%6N` delete vsphere history done"
+
+exit 0
+
